@@ -1,0 +1,106 @@
+{
+  "form": {
+    "pageTitle": "Report an Emergency",
+    "pageSubtitle": "Use this form to report a medical emergency. A trained response agent will be notified immediately.",
+    "sectionCallerInfo": "Your Information",
+    "sectionCallerInfoPidgin": "Tell us about you",
+    "sectionEmergencyDetails": "Emergency Details",
+    "sectionEmergencyDetailsPidgin": "Wetin happen?",
+    "sectionLanguagePreference": "Language Preference",
+    "callerName": {
+      "label": "Your Name",
+      "placeholder": "Enter your full name",
+      "error": "Please enter your name"
+    },
+    "callerPhone": {
+      "label": "Contact Number",
+      "placeholder": "e.g. 08012345678",
+      "description": "We will use this number to follow up with you",
+      "error": "Please enter a valid contact number"
+    },
+    "locationDescription": {
+      "label": "Location",
+      "placeholder": "Street address, landmark, or area description",
+      "description": "Be as specific as possible — include a landmark if you know one",
+      "descriptionPidgin": "Tell us the place well-well",
+      "error": "Please describe the location"
+    },
+    "lga": {
+      "label": "Local Government Area (LGA)",
+      "placeholder": "e.g. Ikeja, Eti-Osa, Lagos Island",
+      "error": "Please enter the LGA"
+    },
+    "presentingComplaint": {
+      "label": "What is happening?",
+      "placeholder": "Describe the emergency — symptoms, injuries, or situation",
+      "descriptionPidgin": "Explain well, make dem understand",
+      "error": "Please describe what is happening"
+    },
+    "emergencyType": {
+      "label": "Type of Emergency",
+      "placeholder": "Select emergency type",
+      "error": "Please select an emergency type",
+      "options": {
+        "cardiac": "Cardiac (Heart)",
+        "trauma": "Trauma / Injury",
+        "obstetric": "Obstetric (Pregnancy / Childbirth)",
+        "pediatric": "Pediatric (Child)",
+        "neurological": "Neurological (Stroke / Seizure)",
+        "burns": "Burns",
+        "general_medical": "General Medical"
+      }
+    },
+    "personsAffected": {
+      "label": "Number of People Affected",
+      "placeholder": "1",
+      "error": "Please enter the number of people affected (minimum 1)"
+    },
+    "preferredLanguage": {
+      "label": "Preferred Language",
+      "description": "Tell us which language you are most comfortable with",
+      "error": "Please select a language",
+      "options": {
+        "en": "English",
+        "pcm": "Nigerian Pidgin",
+        "ha": "Hausa",
+        "yo": "Yoruba",
+        "ig": "Igbo",
+        "other": "Other"
+      }
+    },
+    "consent": {
+      "label": "I consent to the information submitted in this form being used solely for the purpose of coordinating emergency medical assistance on my behalf.",
+      "error": "You must provide consent to submit this request"
+    },
+    "submit": "Submit Emergency Request",
+    "submitting": "Submitting...",
+    "submitError": "Something went wrong. Please try again or call the emergency line directly.",
+    "syntheticDataNotice": "This is a demonstration system. All data is fictional and used for training purposes only."
+  },
+  "confirmation": {
+    "title": "Emergency Request Received",
+    "message": "Your emergency request has been received. A trained response agent has been notified and will coordinate assistance immediately.",
+    "referenceLabel": "Your Reference Number",
+    "referenceNote": "Save this number. If you call us, quote this reference so we can find your case quickly.",
+    "nextSteps": "What happens next",
+    "nextStep1": "A response agent will review your request immediately.",
+    "nextStep2": "The agent will identify the nearest available hospital with the right capability.",
+    "nextStep3": "An ambulance will be dispatched to your location.",
+    "agentNote": "If you need to speak to someone urgently, call the emergency line shown below.",
+    "submitAnother": "Submit another request"
+  },
+  "fallback": {
+    "bannerTitle": "Emergency Contacts",
+    "bannerMessage": "If this system is unavailable or you need immediate help, call one of these numbers directly:",
+    "contact1Label": "RapidResponse NG Emergency Line",
+    "contact1Number": "+234-800-000-0001",
+    "contact2Label": "Lagos State Emergency Management Agency (Demo)",
+    "contact2Number": "+234-800-000-0002",
+    "syntheticNotice": "These are fictional contact numbers for demonstration purposes only."
+  },
+  "nav": {
+    "siteName": "Royalty Rescue AI",
+    "portalName": "Emergency Portal",
+    "tagline": "In an emergency, finding help should not become another emergency."
+  }
+}
