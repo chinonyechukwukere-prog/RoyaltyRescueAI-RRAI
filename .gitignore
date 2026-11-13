@@ -37,3 +37,6 @@ next-env.d.ts
 
 # local working copies / teammate repo clone (not part of project source)
 /Frontend/
+
+# Supabase CLI runtime cache (not source)
+/supabase/.temp/
