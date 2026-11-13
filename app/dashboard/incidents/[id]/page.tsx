@@ -379,10 +379,27 @@ export default function IncidentDetailPage() {
           </div>
 
           <div className="rounded-xl border border-border bg-white p-5">
-            <h2 className="text-sm font-semibold text-foreground mb-2">Quick Actions</h2>
-            <p className="text-xs text-muted-foreground">
-              Dispatch, patient acceptance, and handover controls are implemented in Stage 3.
-            </p>
+            <h2 className="text-sm font-semibold text-foreground mb-3">Quick Actions</h2>
+            <div className="space-y-2">
+              {[
+                { href: `/dashboard/incidents/${incident.id}/acceptance`, label: "Patient Acceptance", desc: "F6 — hospital admin confirms" },
+                { href: `/dashboard/incidents/${incident.id}/dispatch`,   label: "Ambulance Dispatch",  desc: "F7 — assign & track unit" },
+                { href: `/dashboard/incidents/${incident.id}/handover`,   label: "Handover Summary",    desc: "F8 — generate & acknowledge" },
+                { href: `/dashboard/incidents/${incident.id}/audit`,      label: "Audit Log",           desc: "F9 — full immutable trail" },
+              ].map((action) => (
+                <Link
+                  key={action.href}
+                  href={action.href}
+                  className="flex items-center justify-between rounded-lg border border-border px-3 py-2.5 hover:bg-secondary/30 transition group"
+                >
+                  <div>
+                    <p className="text-sm font-medium text-foreground group-hover:text-primary">{action.label}</p>
+                    <p className="text-xs text-muted-foreground">{action.desc}</p>
+                  </div>
+                  <span className="text-muted-foreground group-hover:text-primary text-sm">→</span>
+                </Link>
+              ))}
+            </div>
           </div>
         </div>
       </div>
