@@ -28,13 +28,12 @@
  * -----
  * In YOUR terminal (not IBM Bob) from the project root:
  *
- *   npx tsx scripts/seed-auth-users.ts
+ *   $env:RRAI_SEED_PASSWORD = "YourDemoPassword"
+ *   & "C:\Program Files\nodejs\node.exe" "node_modules\.bin\tsx" scripts/seed-auth-users.ts
  *
- * You will be prompted:
- *   Enter demo password for all 7 synthetic accounts:
- *
- * Choose something you will remember for the demo — e.g. RraiDemo2026!
- * This password is ONLY for the fictional prototype accounts.
+ * The password is read from the RRAI_SEED_PASSWORD environment variable.
+ * It is session-scoped — never written to disk or any file.
+ * Choose something you will remember for the demo (min 8 chars).
  *
  * AFTER RUNNING
  * -------------
@@ -47,7 +46,6 @@
 import { createClient } from "@supabase/supabase-js";
 import * as fs from "fs";
 import * as path from "path";
-import * as readline from "readline";
 import { execSync } from "child_process";
 
 // ---------------------------------------------------------------------------
@@ -75,28 +73,28 @@ function loadEnv(): Record<string, string> {
 }
 
 // ---------------------------------------------------------------------------
-// Prompt for password (not echoed to terminal on supported platforms)
+// Read demo password from RRAI_SEED_PASSWORD environment variable.
+// Set it in your shell before running — never written to any file.
+//
+// PowerShell:
+//   $env:RRAI_SEED_PASSWORD = "YourDemoPassword"
+//   & "C:\Program Files\nodejs\node.exe" "node_modules\.bin\tsx" scripts/seed-auth-users.ts
+//
+// The env var is scoped to your current shell session only and disappears
+// when you close the terminal. It does not appear in process arguments.
 // ---------------------------------------------------------------------------
-function promptPassword(prompt: string): Promise<string> {
-  return new Promise((resolve) => {
-    const rl = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout,
-      terminal: true,
-    });
-    // Suppress echo if the platform supports it
-    if ((process.stdout as NodeJS.WriteStream).isTTY) {
-      (rl as unknown as { _writeToOutput: (s: string) => void })._writeToOutput = (s: string) => {
-        if (s === "\r\n" || s === "\n") process.stdout.write(s);
-        // suppress keystrokes
-      };
-    }
-    rl.question(prompt, (answer) => {
-      process.stdout.write("\n");
-      rl.close();
-      resolve(answer);
-    });
-  });
+function getPassword(): string {
+  const pw = process.env["RRAI_SEED_PASSWORD"] ?? "";
+  if (!pw) {
+    throw new Error(
+      "RRAI_SEED_PASSWORD environment variable is not set.\n" +
+      "Set it in your shell before running this script:\n\n" +
+      '  PowerShell:  $env:RRAI_SEED_PASSWORD = "YourDemoPassword"\n' +
+      '  Then run:    & "C:\\Program Files\\nodejs\\node.exe" "node_modules\\.bin\\tsx" scripts/seed-auth-users.ts\n\n' +
+      "The variable is session-scoped and never written to disk."
+    );
+  }
+  return pw;
 }
 
 // ---------------------------------------------------------------------------
@@ -225,17 +223,11 @@ async function main() {
   }
 
   // ---- Prompt for password -------------------------------------------------
-  console.log(
-    "\nYou will be prompted for a demo password.\n" +
-    "This password will be set for ALL 7 synthetic accounts.\n" +
-    "Choose something you will remember for the competition demo.\n" +
-    "It is NEVER written to disk or any file.\n"
-  );
-  const password = await promptPassword("Enter demo password for all 7 synthetic accounts: ");
-
+  const password = getPassword();
   if (password.length < 8) {
-    throw new Error("Password must be at least 8 characters.");
+    throw new Error("RRAI_SEED_PASSWORD must be at least 8 characters.");
   }
+  console.log("Demo password loaded from RRAI_SEED_PASSWORD ✓\n");
 
   // ---- Process each user ---------------------------------------------------
   console.log("\nProcessing users...\n");
