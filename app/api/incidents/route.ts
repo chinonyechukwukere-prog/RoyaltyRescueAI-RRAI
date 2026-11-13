@@ -1,21 +1,18 @@
-import { NextRequest, NextResponse } from "next/server";
-
 /**
- * POST /api/incidents — Citizen emergency intake
+ * POST /api/incidents — Citizen emergency intake (public, no auth required)
+ * GET  /api/incidents — List incidents for authenticated agents (org-scoped)
  *
- * Public route — no authentication required (Architecture v1.7 §2.2).
- * Accepts a citizen emergency request, persists it to Supabase, and
- * returns an incident reference number to the caller.
- *
- * Validation logic preserved from Tarun's original stub (tarun0306/RRAI-frontend).
- * Database wiring added for Stage 1 Foundation — Architecture v1.7 §4, §7.5.
- *
- * Organization routing: all citizen submissions are assigned server-side to
- * DEFAULT_CITIZEN_ORG_ID (Org A — RapidResponse NG). The citizen is never
- * informed which organization receives their request.
+ * Architecture v1.7 §4, §2.2, §7.5
+ * Validation logic from Tarun's original stub (tarun0306/RRAI-frontend)
  */
 
+import { NextRequest, NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase/server";
+import { requireRole } from "@/lib/supabase/middleware";
+
+// ---------------------------------------------------------------------------
+// POST — public citizen intake (no authentication required)
+// ---------------------------------------------------------------------------
 
 const REQUIRED_FIELDS = [
   "caller_name",
@@ -42,80 +39,58 @@ type IncidentRequest = {
 
 export async function POST(request: NextRequest) {
   let body: IncidentRequest;
-
   try {
     body = await request.json();
   } catch {
-    return NextResponse.json(
-      { error: "Invalid JSON in request body." },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: "Invalid JSON in request body." }, { status: 400 });
   }
 
-  // Consent gate — non-negotiable per PRD F1.7
+  // Consent gate — non-negotiable (PRD F1.7, MVP AC-21)
   if (!body.consent_given) {
     return NextResponse.json(
-      {
-        error: "CONSENT_REQUIRED",
-        message: "Consent must be provided before submitting an emergency request.",
-      },
+      { error: "CONSENT_REQUIRED", message: "Consent must be provided before submitting an emergency request." },
       { status: 400 }
     );
   }
 
-  // Required field validation
+  // Required field validation (Tarun's original logic preserved)
   const missing: string[] = [];
   for (const field of REQUIRED_FIELDS) {
     const value = body[field];
-    if (value === undefined || value === null || value === "") {
-      missing.push(field);
-    }
+    if (value === undefined || value === null || value === "") missing.push(field);
   }
-
   if (missing.length > 0) {
     return NextResponse.json(
-      {
-        error: "MISSING_REQUIRED_FIELDS",
-        message: `The following fields are required: ${missing.join(", ")}`,
-        fields: missing,
-      },
+      { error: "MISSING_REQUIRED_FIELDS", message: `Required fields missing: ${missing.join(", ")}`, fields: missing },
       { status: 400 }
     );
   }
 
-  // Persons affected must be at least 1
   if (typeof body.persons_affected !== "number" || body.persons_affected < 1) {
     return NextResponse.json(
-      {
-        error: "INVALID_PERSONS_AFFECTED",
-        message: "persons_affected must be a number of at least 1.",
-      },
+      { error: "INVALID_PERSONS_AFFECTED", message: "persons_affected must be a number of at least 1." },
       { status: 400 }
     );
   }
 
-  // Generate reference number: RRAI-YYYYMMDD-NNNN (Architecture v1.7 §4)
+  // Reference number: RRAI-YYYYMMDD-NNNN (Architecture v1.7 §4)
   const now = new Date();
   const datePart =
     now.getFullYear().toString() +
     String(now.getMonth() + 1).padStart(2, "0") +
     String(now.getDate()).padStart(2, "0");
-  const seqPart = String(Math.floor(Math.random() * 9000) + 1000);
-  const referenceNumber = `RRAI-${datePart}-${seqPart}`;
+  const referenceNumber = `RRAI-${datePart}-${String(Math.floor(Math.random() * 9000) + 1000)}`;
 
-  // Organization routing: assigned server-side — never from request body.
-  // Architecture v1.7 §7.5
+  // Org routing: assigned server-side — never from request body (Architecture v1.7 §7.5)
   const organizationId = process.env.DEFAULT_CITIZEN_ORG_ID;
   if (!organizationId) {
-    console.error("[incidents/route] DEFAULT_CITIZEN_ORG_ID is not set.");
+    console.error("[POST /api/incidents] DEFAULT_CITIZEN_ORG_ID is not set");
     return NextResponse.json(
       { error: "SERVER_CONFIGURATION_ERROR", message: "Service temporarily unavailable." },
       { status: 503 }
     );
   }
 
-  // Persist incident to Supabase via service_role client (no user JWT present).
-  // Architecture v1.7 §7.5 — citizen portal uses system-context write.
   const { data: incident, error: insertError } = await supabaseServer
     .from("incidents")
     .insert({
@@ -136,15 +111,14 @@ export async function POST(request: NextRequest) {
     .single();
 
   if (insertError || !incident) {
-    console.error("[incidents/route] Insert error:", insertError?.message);
+    console.error("[POST /api/incidents] Insert error:", insertError?.message);
     return NextResponse.json(
       { error: "INCIDENT_CREATE_FAILED", message: "Failed to record your emergency request. Please try again." },
       { status: 500 }
     );
   }
 
-  // Write audit log entry via write_with_audit() RPC (system-context path).
-  // Architecture v1.7 §10.1a Layer 1c — system-context, p_org_id required.
+  // Audit log — system-context write (no user JWT on citizen portal)
   await supabaseServer.rpc("write_with_audit", {
     p_operation_data: { caller_name: body.caller_name, emergency_type: body.emergency_type },
     p_audit_source:   "system",
@@ -156,12 +130,43 @@ export async function POST(request: NextRequest) {
   });
 
   return NextResponse.json(
-    {
-      incident_id:      incident.id,
-      reference_number: incident.reference_number,
-      status:           incident.status,
-      message:          "Your emergency request has been received.",
-    },
+    { incident_id: incident.id, reference_number: incident.reference_number, status: incident.status, message: "Your emergency request has been received." },
     { status: 201 }
   );
+}
+
+// ---------------------------------------------------------------------------
+// GET — authenticated agent incident list (org-scoped)
+// ---------------------------------------------------------------------------
+export async function GET(request: NextRequest) {
+  const auth = await requireRole(request, ["response_agent", "ambulance_dispatcher", "org_admin"]);
+  if (auth.error) return auth.error;
+
+  const { organizationId } = auth;
+  const { searchParams } = new URL(request.url);
+  const statusParam = searchParams.get("status");
+  const statuses = statusParam ? statusParam.split(",") : null;
+
+  let query = supabaseServer
+    .from("incidents")
+    .select(
+      `id, reference_number, status, source_type,
+       caller_name, emergency_type, lga, location_description,
+       persons_affected, triage_priority, assigned_agent_id, selected_hospital_id,
+       created_at, updated_at`
+    )
+    .eq("organization_id", organizationId)
+    .order("created_at", { ascending: false });
+
+  if (statuses && statuses.length > 0) {
+    query = query.in("status", statuses);
+  }
+
+  const { data, error } = await query;
+  if (error) {
+    console.error("[GET /api/incidents]", error.message);
+    return NextResponse.json({ error: "FETCH_FAILED" }, { status: 500 });
+  }
+
+  return NextResponse.json({ incidents: data });
 }
