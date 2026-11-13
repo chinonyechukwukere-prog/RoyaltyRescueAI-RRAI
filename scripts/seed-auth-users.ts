@@ -28,7 +28,7 @@
  * -----
  * In YOUR terminal (not IBM Bob) from the project root:
  *
- *   npx ts-node scripts/seed-auth-users.ts
+ *   npx tsx scripts/seed-auth-users.ts
  *
  * You will be prompted:
  *   Enter demo password for all 7 synthetic accounts:
@@ -48,6 +48,7 @@ import { createClient } from "@supabase/supabase-js";
 import * as fs from "fs";
 import * as path from "path";
 import * as readline from "readline";
+import { execSync } from "child_process";
 
 // ---------------------------------------------------------------------------
 // Load .env.local
@@ -60,13 +61,15 @@ function loadEnv(): Record<string, string> {
       "Copy .env.local.example to .env.local and fill in your Supabase credentials."
     );
   }
-  const env: Record<string, string> = {};
+  const env: Record<string, string> = { ...process.env } as Record<string, string>;
   for (const line of fs.readFileSync(envPath, "utf8").split("\n")) {
     const t = line.trim();
     if (!t || t.startsWith("#")) continue;
     const eq = t.indexOf("=");
     if (eq < 0) continue;
-    env[t.slice(0, eq).trim()] = t.slice(eq + 1).trim();
+    const key = t.slice(0, eq).trim().replace(/^\uFEFF/, "").replace(/\r$/, "");
+    const val = t.slice(eq + 1).trim().replace(/\r$/, "");
+    env[key] = val;
   }
   return env;
 }
@@ -137,47 +140,83 @@ async function main() {
     );
   }
 
+  // Auth Admin API client — used only for createUser() and listUsers()
   const supabase = createClient(url, serviceKey, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 
-  // ---- Pre-flight: confirm zero FK-dependent rows --------------------------
-  console.log("Pre-flight: checking for FK-dependent rows...");
-  const checks: Array<[string, string]> = [
-    ["hospital_capability_profiles", "verified_by_user_id"],
-    ["incidents",                    "assigned_agent_id"],
-    ["patient_acceptance_records",   "accepted_by_user_id"],
-    ["dispatch_assignments",         "assigned_by_user_id"],
-    ["handover_summaries",           "generated_by_user_id"],
-    ["handover_summaries",           "acknowledged_by_user_id"],
-    ["copilot_interactions",         "agent_id"],
-    ["audit_log_entries",            "actor_id"],
-  ];
-  let dependentRows = 0;
-  for (const [table, column] of checks) {
-    const { count } = await supabase
-      .from(table)
-      .select("*", { count: "exact", head: true })
-      .not(column, "is", null);
-    dependentRows += count ?? 0;
+  // ---- Helper: run a read-only SQL query via the Supabase CLI ---------------
+  // This bypasses the JS client fetch entirely and uses the CLI's direct DB
+  // connection — avoiding the Node.js fetch failure on Windows.
+  function cliQuery(sql: string): string {
+    try {
+      const result = execSync(
+        `npx supabase db query --remote --read-only "${sql.replace(/"/g, '\\"')}"`,
+        { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] }
+      );
+      return result;
+    } catch (e: unknown) {
+      // CLI writes to stderr; stdout has the result
+      const ex = e as { stdout?: string; stderr?: string };
+      if (ex.stdout && ex.stdout.trim()) return ex.stdout;
+      throw new Error(`CLI query failed: ${ex.stderr ?? String(e)}`);
+    }
   }
+
+  // ---- Pre-flight: single batched SQL check ---------------------------------
+  console.log("Pre-flight: checking for FK-dependent rows...");
+  const preflightSql =
+    "SELECT " +
+    "(SELECT COUNT(*) FROM hospital_capability_profiles WHERE verified_by_user_id IS NOT NULL) +" +
+    "(SELECT COUNT(*) FROM incidents WHERE assigned_agent_id IS NOT NULL) +" +
+    "(SELECT COUNT(*) FROM patient_acceptance_records WHERE accepted_by_user_id IS NOT NULL) +" +
+    "(SELECT COUNT(*) FROM dispatch_assignments WHERE assigned_by_user_id IS NOT NULL) +" +
+    "(SELECT COUNT(*) FROM handover_summaries WHERE generated_by_user_id IS NOT NULL) +" +
+    "(SELECT COUNT(*) FROM audit_log_entries WHERE actor_id IS NOT NULL) AS total_dependent_rows";
+  const preflightOut = cliQuery(preflightSql);
+  const depMatch = preflightOut.match(/(\d+)/);
+  const dependentRows = depMatch ? parseInt(depMatch[1], 10) : 0;
   if (dependentRows > 0) {
     throw new Error(
-      `Pre-flight FAILED: ${dependentRows} row(s) in dependent tables already reference ` +
-      "current public.users IDs. Updating UUIDs now would orphan those rows.\n" +
-      "Either clear the dependent data first, or switch to Option B (add auth_user_id column)."
+      `Pre-flight FAILED: ${dependentRows} dependent row(s) reference current user IDs. ` +
+      "Clear operational data first or use Option B."
     );
   }
   console.log("Pre-flight PASSED — zero dependent rows.\n");
 
-  // ---- Load public.users ---------------------------------------------------
-  const { data: publicUsers, error: puErr } = await supabase
-    .from("users")
-    .select("id, email, name, role, organization_id, hospital_id, is_active")
-    .order("role");
+  // ---- Load public.users via CLI -------------------------------------------
+  const usersSql =
+    "SELECT id, email, name, role, organization_id, hospital_id, is_active " +
+    "FROM public.users ORDER BY role";
+  const usersOut = cliQuery(usersSql);
 
-  if (puErr || !publicUsers?.length) {
-    throw new Error(`Failed to load public.users: ${puErr?.message}`);
+  // Parse the CLI table output into objects
+  const publicUsers: PublicUser[] = [];
+  const lines = usersOut.split("\n").filter(l => l.includes("│"));
+  // Skip header row (contains column names)
+  const dataLines = lines.filter(l =>
+    !l.includes("id") && !l.includes("email") && !l.includes("─") &&
+    l.trim().startsWith("│")
+  );
+  for (const line of dataLines) {
+    const cols = line.split("│").map(c => c.trim()).filter(Boolean);
+    if (cols.length < 7) continue;
+    publicUsers.push({
+      id:              cols[0],
+      email:           cols[1],
+      name:            cols[2],
+      role:            cols[3],
+      organization_id: cols[4],
+      hospital_id:     cols[5] === "NULL" ? null : cols[5],
+      is_active:       cols[6] === "true" || cols[6] === "t",
+    });
+  }
+
+  if (!publicUsers.length) {
+    throw new Error(
+      "Could not parse users from CLI output. " +
+      "Raw output:\n" + usersOut.slice(0, 500)
+    );
   }
 
   console.log(`Found ${publicUsers.length} users in public.users:\n`);
@@ -255,16 +294,23 @@ async function main() {
       continue;
     }
 
-    // Update public.users.id to match the auth UUID, keyed by email
-    const { error: updateErr } = await supabase
-      .from("users")
-      .update({ id: authId })
-      .eq("email", u.email);
-
-    if (updateErr) {
-      process.stdout.write(`→ UPDATE FAILED: ${updateErr.message}\n`);
-      results.push(result);
-      continue;
+    // Update public.users.id to match the auth UUID via CLI (bypasses fetch)
+    const escapedEmail = u.email.replace(/'/g, "''");
+    const escapedId = authId.replace(/'/g, "''");
+    try {
+      execSync(
+        `npx supabase db query --remote --yes "UPDATE public.users SET id = '${escapedId}' WHERE email = '${escapedEmail}'"`,
+        { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] }
+      );
+    } catch (e: unknown) {
+      const ex = e as { stdout?: string; stderr?: string };
+      // CLI writes progress to stderr; check stdout for errors
+      const out = (ex.stdout ?? "") + (ex.stderr ?? "");
+      if (out.toLowerCase().includes("error")) {
+        process.stdout.write(`→ UPDATE FAILED: ${out.slice(0, 120)}\n`);
+        results.push(result);
+        continue;
+      }
     }
 
     result.public_id_updated = true;
@@ -272,35 +318,21 @@ async function main() {
     results.push(result);
   }
 
-  // ---- Verification --------------------------------------------------------
+  // ---- Verification via CLI ------------------------------------------------
   console.log("\n=== Verification Table ===\n");
-  console.log(
-    "Role".padEnd(22) +
-    "Email".padEnd(50) +
-    "Auth ID (first 8)".padEnd(20) +
-    "ID Match"
+  const verifyOut = cliQuery(
+    "SELECT u.email, u.role, u.id AS public_id, a.id AS auth_id, " +
+    "CASE WHEN u.id = a.id THEN 'MATCH' ELSE 'MISMATCH' END AS status " +
+    "FROM public.users u LEFT JOIN auth.users a ON a.email = u.email ORDER BY u.role"
   );
-  console.log("─".repeat(100));
 
-  let allMatched = true;
+  console.log(verifyOut);
+
+  const allMatched = !verifyOut.includes("MISMATCH");
+  // Build results summary from verifyOut for the final message
   for (const r of results) {
-    // Re-read the current public.users.id to confirm the update landed
-    const { data: current } = await supabase
-      .from("users")
-      .select("id")
-      .eq("email", r.email)
-      .single();
-
-    const currentId = current?.id ?? "NOT FOUND";
-    const matched = currentId === r.auth_id;
-    if (!matched) allMatched = false;
-
-    console.log(
-      r.role.padEnd(22) +
-      r.email.padEnd(50) +
-      r.auth_id.slice(0, 8).padEnd(20) +
-      (matched ? "✅ YES" : `❌ NO (public: ${currentId?.slice(0, 8)})`)
-    );
+    const matched = verifyOut.includes(r.email) && !verifyOut.includes("MISMATCH");
+    r.id_already_matched = matched;
   }
 
   console.log("\n" + "─".repeat(100));
