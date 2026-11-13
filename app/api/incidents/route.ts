@@ -1,15 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
-import { randomUUID } from "crypto";
 
 /**
- * POST /api/incidents — Citizen emergency intake stub
+ * POST /api/incidents — Citizen emergency intake
  *
- * This is a development stub that validates the request shape and returns
- * a synthetic 201 response. Full database wiring (Supabase, org routing,
- * audit log) is handled in the backend implementation task.
+ * Public route — no authentication required (Architecture v1.7 §2.2).
+ * Accepts a citizen emergency request, persists it to Supabase, and
+ * returns an incident reference number to the caller.
  *
- * Request/response shape per Architecture v1.7 §4
+ * Validation logic preserved from Tarun's original stub (tarun0306/RRAI-frontend).
+ * Database wiring added for Stage 1 Foundation — Architecture v1.7 §4, §7.5.
+ *
+ * Organization routing: all citizen submissions are assigned server-side to
+ * DEFAULT_CITIZEN_ORG_ID (Org A — RapidResponse NG). The citizen is never
+ * informed which organization receives their request.
  */
+
+import { supabaseServer } from "@/lib/supabase/server";
 
 const REQUIRED_FIELDS = [
   "caller_name",
@@ -88,30 +94,73 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // Generate a synthetic incident ID and reference number
-  // Format: RRAI-YYYYMMDD-NNNN  (per Architecture §4)
-  const incidentId = randomUUID();
+  // Generate reference number: RRAI-YYYYMMDD-NNNN (Architecture v1.7 §4)
   const now = new Date();
   const datePart =
     now.getFullYear().toString() +
     String(now.getMonth() + 1).padStart(2, "0") +
     String(now.getDate()).padStart(2, "0");
-  const seqPart = String(Math.floor(Math.random() * 9000) + 1000); // 4-digit synthetic sequence
+  const seqPart = String(Math.floor(Math.random() * 9000) + 1000);
   const referenceNumber = `RRAI-${datePart}-${seqPart}`;
 
-  // TODO (backend task): persist incident to Supabase with:
-  //   - organization_id (determined server-side by routing config — Org A for MVP)
-  //   - status: "new"
-  //   - source_type: "citizen_portal"
-  //   - all submitted fields
-  //   - write audit_log entry: action_type "incident_submitted", source "human"
+  // Organization routing: assigned server-side — never from request body.
+  // Architecture v1.7 §7.5
+  const organizationId = process.env.DEFAULT_CITIZEN_ORG_ID;
+  if (!organizationId) {
+    console.error("[incidents/route] DEFAULT_CITIZEN_ORG_ID is not set.");
+    return NextResponse.json(
+      { error: "SERVER_CONFIGURATION_ERROR", message: "Service temporarily unavailable." },
+      { status: 503 }
+    );
+  }
+
+  // Persist incident to Supabase via service_role client (no user JWT present).
+  // Architecture v1.7 §7.5 — citizen portal uses system-context write.
+  const { data: incident, error: insertError } = await supabaseServer
+    .from("incidents")
+    .insert({
+      organization_id:      organizationId,
+      status:               "new",
+      source_type:          "citizen_portal",
+      caller_name:          body.caller_name,
+      caller_phone:         body.caller_phone,
+      location_description: body.location_description,
+      lga:                  body.lga,
+      emergency_type:       body.emergency_type,
+      presenting_complaint: body.presenting_complaint,
+      persons_affected:     body.persons_affected,
+      preferred_language:   body.preferred_language,
+      reference_number:     referenceNumber,
+    })
+    .select("id, reference_number, status")
+    .single();
+
+  if (insertError || !incident) {
+    console.error("[incidents/route] Insert error:", insertError?.message);
+    return NextResponse.json(
+      { error: "INCIDENT_CREATE_FAILED", message: "Failed to record your emergency request. Please try again." },
+      { status: 500 }
+    );
+  }
+
+  // Write audit log entry via write_with_audit() RPC (system-context path).
+  // Architecture v1.7 §10.1a Layer 1c — system-context, p_org_id required.
+  await supabaseServer.rpc("write_with_audit", {
+    p_operation_data: { caller_name: body.caller_name, emergency_type: body.emergency_type },
+    p_audit_source:   "system",
+    p_action_type:    "incident_created",
+    p_entity_type:    "incident",
+    p_entity_id:      incident.id,
+    p_incident_id:    incident.id,
+    p_org_id:         organizationId,
+  });
 
   return NextResponse.json(
     {
-      incident_id: incidentId,
-      reference_number: referenceNumber,
-      status: "new",
-      message: "Your emergency request has been received.",
+      incident_id:      incident.id,
+      reference_number: incident.reference_number,
+      status:           incident.status,
+      message:          "Your emergency request has been received.",
     },
     { status: 201 }
   );
