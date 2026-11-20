@@ -8,7 +8,7 @@
  */
 
 import { useEffect, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import Link from "next/link";
 
 // ---- Types ------------------------------------------------------------------
@@ -68,7 +68,6 @@ const TRIAGE_OPTIONS = ["immediate", "urgent", "delayed", "expectant"];
 
 export default function IncidentDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const router = useRouter();
 
   const [incident, setIncident] = useState<Incident | null>(null);
   const [loading, setLoading] = useState(true);

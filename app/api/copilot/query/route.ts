@@ -31,6 +31,9 @@ type CapabilityProfile = {
   accepted_emergency_types: string[];
   last_verified_at: string | null;
   outdated_threshold_hours: number;
+  emergency_beds_available: number;
+  icu_beds_available: number;
+  emergency_stabilization_capable: boolean;
 };
 
 type Hospital = {

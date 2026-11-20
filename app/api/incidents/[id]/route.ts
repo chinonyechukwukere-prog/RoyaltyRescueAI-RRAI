@@ -34,7 +34,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
   const auth = await requireRole(request, ["response_agent", "ambulance_dispatcher"]);
   if (auth.error) return auth.error;
 
-  let body: { status?: string; triage_priority?: string; assigned_agent_id?: string };
+  let body: { status?: string; triage_priority?: string; assigned_agent_id?: string; selected_hospital_id?: string };
   try {
     body = await request.json();
   } catch {
@@ -54,6 +54,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
   if (body.status) updatePayload.status = body.status;
   if (body.triage_priority) updatePayload.triage_priority = body.triage_priority;
   if (body.assigned_agent_id) updatePayload.assigned_agent_id = body.assigned_agent_id;
+  if (body.selected_hospital_id) updatePayload.selected_hospital_id = body.selected_hospital_id;
 
   const { data, error } = await supabaseServer
     .from("incidents")

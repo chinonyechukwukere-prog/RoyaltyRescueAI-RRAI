@@ -236,7 +236,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
 }
 
 /** GET — return available ambulance units for org */
-export async function GET(request: NextRequest, { params: _ }: Params) {
+export async function GET(request: NextRequest) {
   const auth = await requireRole(request, ["response_agent", "ambulance_dispatcher", "org_admin"]);
   if (auth.error) return auth.error;
 

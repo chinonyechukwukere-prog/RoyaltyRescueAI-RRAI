@@ -9,6 +9,7 @@
 import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const STATUSES = [
   "new", "in_progress", "hospital_selected", "hospital_confirmed",
   "acceptance_confirmed", "dispatched", "en_route", "arrived", "alert_issued", "closed",
