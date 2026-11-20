@@ -1,0 +1,39 @@
+# =============================================================================
+# .dockerignore — RRAI Docker build exclusions
+# Keep the image minimal and ensure secrets never enter the build context.
+# =============================================================================
+
+# Local secrets — must NEVER be in the image
+.env
+.env.local
+.env*.local
+*.pem
+
+# Dev dependencies and cache
+node_modules
+.next/cache
+
+# Git and tooling metadata
+.git
+.gitignore
+.bob
+.eslintrc.json
+
+# Local dev scripts output
+error-log.txt
+scripts/*.log
+
+# Test artifacts (not needed at runtime)
+scripts/test-integration.ts
+scripts/seed-auth-users.ts
+scripts/reset-auth-passwords.ts
+scripts/_verify-fk-deps.ts
+scripts/test-webhook.ts
+
+# Docs (not needed at runtime)
+docs/
+
+# Local IDE / OS files
+.DS_Store
+Thumbs.db
+*.swp
