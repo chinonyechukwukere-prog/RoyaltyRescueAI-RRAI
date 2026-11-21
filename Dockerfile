@@ -11,23 +11,25 @@
 #   None required — all secrets are runtime env vars only.
 # =============================================================================
 
-# ── Stage 1: Dependencies ─────────────────────────────────────────────────────
+# ── Stage 1: Dependencies (production only — for the final runtime image) ─────
 FROM node:22-alpine AS deps
 RUN apk add --no-cache libc6-compat
 WORKDIR /app
 
 COPY package.json package-lock.json ./
-# Use --frozen-lockfile instead of npm ci — tolerant of lockfile metadata
-# differences between npm versions while still preventing new dependency
-# resolution (same security guarantee for a known-good lock file).
+# Install production deps only — used in the runner stage.
+# --frozen-lockfile prevents new resolution; tolerant of lockfile metadata
+# differences between npm versions (same security guarantee as npm ci).
 RUN npm install --omit=dev --frozen-lockfile
 
-# ── Stage 2: Builder ──────────────────────────────────────────────────────────
+# ── Stage 2: Builder (all deps needed — tailwindcss/postcss are devDependencies) ─
 FROM node:22-alpine AS builder
 WORKDIR /app
 
-# Copy deps from previous stage
-COPY --from=deps /app/node_modules ./node_modules
+# Install ALL dependencies (including devDependencies) for the build.
+# tailwindcss, autoprefixer, and postcss are devDeps required by Next.js CSS.
+COPY package.json package-lock.json ./
+RUN npm install --frozen-lockfile
 COPY . .
 
 # Build-time public env vars (non-secret — Supabase URL and anon key are
