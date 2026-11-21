@@ -61,8 +61,8 @@ ENV NEXT_TELEMETRY_DISABLED=1
 RUN addgroup --system --gid 1001 nodejs \
  && adduser  --system --uid 1001 nextjs
 
-# Copy only the standalone output — node_modules are bundled inside it
-COPY --from=builder /app/public ./public
+# Copy only the standalone output — node_modules are bundled inside it.
+# public/ is omitted: this project has no static assets in that directory.
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
