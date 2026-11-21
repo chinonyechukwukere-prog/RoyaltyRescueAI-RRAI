@@ -4,15 +4,17 @@
  * Auth: response_agent only
  * Architecture v1.7 §4, §5, §6
  *
- * STAGE 2 STATUS:
+ * OA-2 STATUS: ✅ RESOLVED
  * - Dual-pass hospital eligibility validation: ✅ IMPLEMENTED
- * - watsonx.ai LLM call: ⏳ PENDING (OA-2 — model ID/endpoint not yet confirmed)
- *   Until OA-2 is resolved, the route returns validated hospital candidates
- *   with a stub rationale, so the agent dashboard and validation logic are
- *   fully testable without live watsonx.ai credentials.
+ * - watsonx.ai LLM call: ✅ IMPLEMENTED (ibm/granite-3-3-8b-instruct)
+ *   Uses IBM IAM token exchange (API key → bearer token) on every request.
+ *   Falls back to structured stub rationale if credentials are absent or the
+ *   watsonx.ai call fails — the safety-critical dual-pass validation always runs
+ *   regardless of LLM status.
  *
- * The dual-pass validation (pre-filter + post-filter) is the safety-critical
- * component. It is fully implemented and enforced regardless of LLM status.
+ * SAFETY: The LLM rationale is advisory only. The pre-filter and post-filter
+ * eligibility checks are enforced before and after the LLM call. No hospital
+ * that failed validation can appear in validated_recommendations.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -198,14 +200,119 @@ export async function POST(request: NextRequest) {
     });
   }
 
-  // POST-FILTER: watsonx.ai call (OA-2 pending)
-  // When OA-2 is resolved: replace stub rationale with actual watsonx.ai response.
-  // The validated_recommendations array structure is final and will not change.
-  const watsonxReady = !!(
-    process.env.WATSONX_API_KEY &&
-    process.env.WATSONX_PROJECT_ID &&
-    process.env.WATSONX_URL
-  );
+  // ── POST-FILTER: watsonx.ai call (OA-2 ✅ resolved) ────────────────────────
+  // Model: ibm/granite-3-3-8b-instruct (latest production Granite instruct model)
+  // Auth:  IBM Cloud IAM API key → bearer token exchange on every request.
+  //        Tokens are short-lived (~1h); we exchange per-request to avoid state.
+  // Safety: rationale is advisory only. Pre-filter already enforced above.
+  //         If watsonx.ai is unavailable, structured stub rationale is used —
+  //         the validated hospital list is returned regardless.
+
+  const watsonxApiKey    = process.env.WATSONX_API_KEY;
+  const watsonxProjectId = process.env.WATSONX_PROJECT_ID;
+  const watsonxUrl       = (process.env.WATSONX_URL ?? "https://us-south.ml.cloud.ibm.com").replace(/\/$/, "");
+  const watsonxReady     = !!(watsonxApiKey && watsonxProjectId &&
+    watsonxApiKey !== "your_ibm_cloud_iam_api_key_here" &&
+    watsonxProjectId !== "your_watsonx_project_id_here");
+
+  // Build a concise prompt for Granite — structured for fast inference
+  const hospitalSummary = eligible.map(({ hospital, profile }, i) =>
+    `${i + 1}. ${hospital.name} (${hospital.lga}) — ` +
+    `beds: ${profile.emergency_beds_available}, ICU: ${profile.icu_beds_available}, ` +
+    `stabilisation: ${profile.emergency_stabilization_capable ? "yes" : "no"}, ` +
+    `accepts: ${profile.accepted_emergency_types.join(", ")}`
+  ).join("\n");
+
+  const prompt =
+    `You are an emergency medical coordination assistant. ` +
+    `A response agent needs to select a hospital for a ${emergencyType} emergency in ${incident.lga}, Nigeria.\n\n` +
+    `The following hospitals have confirmed availability and have passed all safety checks:\n${hospitalSummary}\n\n` +
+    `For each hospital, provide a brief one-sentence rationale (max 25 words) explaining why it is suitable ` +
+    `for this emergency type. List them in order of suitability. ` +
+    `Respond ONLY with a numbered list matching the hospital order above. ` +
+    `Do not add commentary, caveats, or any text outside the numbered list.`;
+
+  // Per-hospital rationale map: populated from watsonx.ai or stub
+  const rationaleMap: Record<string, string> = {};
+  let watsonxStatus: string;
+
+  if (watsonxReady) {
+    try {
+      // Step 1: Exchange IBM Cloud API key for IAM bearer token
+      const iamRes = await fetch("https://iam.cloud.ibm.com/identity/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: `grant_type=urn:ibm:params:oauth:grant-type:apikey&apikey=${encodeURIComponent(watsonxApiKey!)}`,
+      });
+
+      if (!iamRes.ok) {
+        throw new Error(`IAM token exchange failed: ${iamRes.status}`);
+      }
+      const iamData = await iamRes.json() as { access_token: string };
+      const bearerToken = iamData.access_token;
+
+      // Step 2: Call watsonx.ai text generation API
+      const wxRes = await fetch(
+        `${watsonxUrl}/ml/v1/text/generation?version=2025-02-11`,
+        {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${bearerToken}`,
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+          },
+          body: JSON.stringify({
+            model_id:   "ibm/granite-3-3-8b-instruct",
+            project_id: watsonxProjectId,
+            input:      prompt,
+            parameters: {
+              max_new_tokens: 300,
+              min_new_tokens: 20,
+              stop_sequences: [],
+              repetition_penalty: 1.1,
+            },
+          }),
+        }
+      );
+
+      if (!wxRes.ok) {
+        const errText = await wxRes.text();
+        throw new Error(`watsonx.ai API error ${wxRes.status}: ${errText.slice(0, 200)}`);
+      }
+
+      const wxData = await wxRes.json() as {
+        results?: { generated_text: string }[];
+      };
+      const generatedText = wxData.results?.[0]?.generated_text?.trim() ?? "";
+
+      // Parse numbered list: "1. <rationale>" per hospital
+      const lines = generatedText.split("\n").filter(l => /^\d+\./.test(l.trim()));
+      eligible.forEach(({ hospital }, i) => {
+        const line = lines[i]?.replace(/^\d+\.\s*/, "").trim();
+        rationaleMap[hospital.id] = line
+          ? `[IBM watsonx.ai — Granite 3.3] ${line}`
+          : `[IBM watsonx.ai — Granite 3.3] ${hospital.name} has confirmed availability for ${emergencyType} emergencies.`;
+      });
+
+      watsonxStatus = "called";
+    } catch (err) {
+      // Graceful degradation — log server-side, return stub rationale to client
+      console.error("[POST /api/copilot/query] watsonx.ai error:", (err as Error).message);
+      eligible.forEach(({ hospital }) => {
+        rationaleMap[hospital.id] =
+          `[Stub — watsonx.ai unavailable] ${hospital.name} has confirmed availability for ${emergencyType} emergencies. Human agent must verify before selection.`;
+      });
+      watsonxStatus = "error_fallback_stub";
+    }
+  } else {
+    // Credentials not configured — structured stub
+    eligible.forEach(({ hospital }) => {
+      rationaleMap[hospital.id] =
+        `[Stub — configure WATSONX_API_KEY and WATSONX_PROJECT_ID] ` +
+        `${hospital.name} has confirmed availability for ${emergencyType} emergencies. Human agent must verify before selection.`;
+    });
+    watsonxStatus = "pending_credentials";
+  }
 
   const recommendations = eligible.map(({ hospital, profile }) => ({
     hospital_id: hospital.id,
@@ -217,16 +324,18 @@ export async function POST(request: NextRequest) {
     emergency_beds_available: profile.emergency_beds_available,
     icu_beds_available: profile.icu_beds_available,
     emergency_stabilization_capable: profile.emergency_stabilization_capable,
-    ai_rationale: watsonxReady
-      ? "[watsonx.ai rationale pending — OA-2 not yet resolved]"
-      : `[Prototype stub] ${hospital.name} has confirmed availability and accepts ${emergencyType} emergencies. Human agent must verify before selection.`,
+    ai_rationale: rationaleMap[hospital.id],
     validation_passed: true,
     ai_label: "AI-suggested — human agent must verify before selecting",
   }));
 
   // Audit: copilot response
   await supabaseServer.rpc("write_with_audit", {
-    p_operation_data: { recommendation_count: recommendations.length, excluded_count: excluded.length },
+    p_operation_data: {
+      recommendation_count: recommendations.length,
+      excluded_count:       excluded.length,
+      watsonx_status:       watsonxStatus,
+    },
     p_audit_source:   "ai_suggestion",
     p_action_type:    "copilot_response",
     p_entity_type:    "incident",
@@ -236,11 +345,11 @@ export async function POST(request: NextRequest) {
   });
 
   return NextResponse.json({
-    query_id: queryId,
+    query_id:                  queryId,
     validated_recommendations: recommendations,
-    excluded_hospitals: excluded,
-    escalation_required: false,
-    escalation_message: null,
-    watsonx_status: watsonxReady ? "called" : "pending_oa2_credentials",
+    excluded_hospitals:        excluded,
+    escalation_required:       false,
+    escalation_message:        null,
+    watsonx_status:            watsonxStatus,
   });
 }
