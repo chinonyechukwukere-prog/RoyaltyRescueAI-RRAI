@@ -291,8 +291,8 @@ export async function POST(request: NextRequest) {
       eligible.forEach(({ hospital }, i) => {
         const line = lines[i]?.replace(/^\d+\.\s*/, "").trim();
         rationaleMap[hospital.id] = line
-          ? `[IBM watsonx.ai — Granite 3.3] ${line}`
-          : `[IBM watsonx.ai — Granite 3.3] ${hospital.name} has confirmed availability for ${emergencyType} emergencies.`;
+          ? `[IBM watsonx.ai — Granite 4.0] ${line}`
+          : `[IBM watsonx.ai — Granite 4.0] ${hospital.name} has confirmed availability for ${emergencyType} emergencies.`;
       });
 
       watsonxStatus = "called";
