@@ -6,7 +6,7 @@
  *
  * OA-2 STATUS: ✅ RESOLVED
  * - Dual-pass hospital eligibility validation: ✅ IMPLEMENTED
- * - watsonx.ai LLM call: ✅ IMPLEMENTED (ibm/granite-3-3-8b-instruct)
+ * - watsonx.ai LLM call: ✅ IMPLEMENTED (ibm/granite-4-h-small)
  *   Uses IBM IAM token exchange (API key → bearer token) on every request.
  *   Falls back to structured stub rationale if credentials are absent or the
  *   watsonx.ai call fails — the safety-critical dual-pass validation always runs
@@ -201,7 +201,8 @@ export async function POST(request: NextRequest) {
   }
 
   // ── POST-FILTER: watsonx.ai call (OA-2 ✅ resolved) ────────────────────────
-  // Model: ibm/granite-3-3-8b-instruct (latest production Granite instruct model)
+  // Model: ibm/granite-4-h-small (Granite 4.0 — multitenant, Dallas + Frankfurt)
+  //        granite-3-3-8b-instruct was withdrawn 22 Feb 2026 per IBM docs.
   // Auth:  IBM Cloud IAM API key → bearer token exchange on every request.
   //        Tokens are short-lived (~1h); we exchange per-request to avoid state.
   // Safety: rationale is advisory only. Pre-filter already enforced above.
@@ -262,7 +263,7 @@ export async function POST(request: NextRequest) {
             "Accept": "application/json",
           },
           body: JSON.stringify({
-            model_id:   "ibm/granite-3-3-8b-instruct",
+            model_id:   "ibm/granite-4-h-small",
             project_id: watsonxProjectId,
             input:      prompt,
             parameters: {
